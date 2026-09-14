@@ -20,7 +20,7 @@
 	<div class="sdpi-wrapper hidden" id="mainWrapper">
 		<div id="PI_Shortcuts">
 			<div class="sdpi-item" id="isFolder">
-				<label class="sdpi-item-label">📁 Folder</label>
+				<label class="sdpi-item-label" for="shortcuts_folder_list" data-i18n="📁 Folder">📁 Folder</label>
 				<select class="sdpi-item-value select" name="shortcuts_folder_list" id="shortcuts_folder_list"
 					onfocus="refreshListOfShortcutsFolders()"
 					onchange="selectedNewIndex(this.selectedIndex, 'shortcutFolder');">
@@ -28,7 +28,7 @@
 				</select>
 			</div>
 			<div class="sdpi-item">
-				<label class="sdpi-item-label">⚡ Shortcut</label>
+				<label class="sdpi-item-label" for="shortcut_list" data-i18n="⚡ Shortcut">⚡ Shortcut</label>
 				<select class="sdpi-item-value select" id="shortcut_list" onfocus="refreshListOfShortcuts()"
 					onchange="selectedNewIndex(this.selectedIndex, 'shortcut');">
 					<option value="rigatoni">Loading...</option>
@@ -36,9 +36,14 @@
 			</div>
 
 			<div class="sdpi-item">
-				<div class="sdpi-item-label">💬 Force Title</div>
+				<div class="sdpi-item-label" data-i18n="💬 Force Title">💬 Force Title</div>
 				<button class="sdpi-item-value" id="forced_title_checkbox" onclick="changeForcedTitle()">OFF</button>
 			</div>
+			<div class="sdpi-item">
+				<div class="sdpi-item-label"></div>
+				<button class="sdpi-item-value" id="retry_load" onclick="retryLoad()">Retry / Refresh</button>
+			</div>
+			<p id="load_status" role="status" aria-live="polite" hidden style="font-size: 12px; line-height: 1.5; margin: 8px 12px;"></p>
 
 			<div class="sdpi-item">
 				<div class="sdpi-item-label"></div>

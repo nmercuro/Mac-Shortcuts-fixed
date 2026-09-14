@@ -5,6 +5,22 @@ All notable changes to the Mac Shortcuts Plugin for Mirabox StreamDock will be d
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-09-13
+
+### Fixed
+- Removed the launcher's dependency on Python in favor of built-in macOS JavaScript for Automation.
+- Handle MiraBox settings events and recover from a missed property-inspector-open event.
+- Add loading timeout, retry, connection errors, and empty-library messages.
+- Preserve selected shortcuts while browsing folders; refresh renamed folders.
+- Preserve exact shortcut capitalization and Unicode names.
+
+### Added
+- Backup installer for an existing 1.0.0 installation.
+- Ten regression checks using the production settings-panel script and simulated host events.
+
+### Validation limitation
+- The native executable is unchanged. Real macOS launch, shortcut enumeration, and physical StreamDock operation still need verification on the user's Mac.
+
 ## [1.0.0] - 2025-07-29
 
 ### Added
