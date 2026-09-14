@@ -12,13 +12,14 @@ fi
 TARGET="${1:-}"
 if [[ -z "$TARGET" ]]; then
     for PARENT in "$HOME/Library/Application Support/HotSpot/StreamDock/Plugins" "$HOME/Library/Application Support/HotSpot/StreamDock/plugins"; do
-        CANDIDATE="$PARENT/$BUNDLE"
-        if [[ -d "$CANDIDATE" ]]; then
+        for CANDIDATE in "$PARENT/$BUNDLE" "$PARENT"/MacShortcuts-v*.sdPlugin; do
+            [[ -d "$CANDIDATE" && ! -L "$CANDIDATE" ]] || continue
+            [[ -f "$CANDIDATE/StreamDeck-Shortcuts" && -f "$CANDIDATE/manifest.json" ]] || continue
             if [[ -n "$TARGET" && ! "$CANDIDATE" -ef "$TARGET" ]]; then
                 fail 'More than one plugin installation exists. Run this script with the desired plugin folder as its argument.'
             fi
             TARGET="$CANDIDATE"
-        fi
+        done
     done
 fi
 [[ -n "$TARGET" && -d "$TARGET" && ! -L "$TARGET" ]] || fail 'Could not find the existing plugin. Run this script with its .sdPlugin folder as the first argument.'
@@ -32,7 +33,7 @@ STAGE="$(/usr/bin/mktemp -d "$TARGET_PARENT/.mac-shortcuts-repair.XXXXXX")"
 BACKUP_ROOT="$HOME/Library/Application Support/MiraBox-Shortcuts-Backups"
 /bin/mkdir -p "$BACKUP_ROOT"
 BACKUP_PARENT="$(/usr/bin/mktemp -d "$BACKUP_ROOT/repair-$(/bin/date +%Y%m%d-%H%M%S).XXXXXX")"
-BACKUP="$BACKUP_PARENT/$BUNDLE"
+BACKUP="$BACKUP_PARENT/$(basename -- "$TARGET")"
 # Stage a complete copy first. No original files move until staging succeeds.
 /usr/bin/ditto "$TARGET" "$STAGE/$BUNDLE"
 for FILE in StreamDock-Wrapper normalize-info.js manifest.json pi/main_pi.html pi/main_pi.js; do

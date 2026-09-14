@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.1] - 2026-09-13
 
 ### Fixed
+- Detect versioned plugin folders such as `MacShortcuts-v1.0.0.sdPlugin` in both `plugins` and `Plugins`; preserve the original folder name in backups.
 - Removed the launcher's dependency on Python in favor of built-in macOS JavaScript for Automation.
 - Handle MiraBox settings events and recover from a missed property-inspector-open event.
 - Add loading timeout, retry, connection errors, and empty-library messages.

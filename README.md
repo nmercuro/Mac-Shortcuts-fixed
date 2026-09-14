@@ -14,7 +14,7 @@ This fork repairs startup and the folder/shortcut picker in Orumad's 1.0.0 relea
 
 ### Install the repair
 
-1. Extract the entire repair ZIP on your Mac.
+1. Download and extract the latest source ZIP from this PR’s branch on your Mac. Older repair ZIPs do not include the expanded folder detection.
 2. Quit Stream Dock completely.
 3. Run `Install-Repair.command`. It locates the existing plugin, stages the repair, and saves the complete original in `~/Library/Application Support/MiraBox-Shortcuts-Backups/`.
 4. Reopen Stream Dock and select the shortcut button. Use **Retry / Refresh** if needed.
@@ -23,7 +23,15 @@ If Finder cannot run the command file, open Terminal, type `bash ` (with a trail
 
 The installer replaces only `StreamDock-Wrapper`, `normalize-info.js`, `manifest.json`, `pi/main_pi.html`, and `pi/main_pi.js`. It preserves the existing native executable, icons, CSS, translations, settings, and Stream Dock profiles. It also restores executable permissions on the launcher and native helper.
 
-The normal plugin directory is `~/Library/Application Support/HotSpot/StreamDock/Plugins/`. If yours is elsewhere, pass the existing `.sdPlugin` folder as the installer’s first argument. To revert, quit Stream Dock and restore the original plugin folder from the backup.
+The installer checks both `~/Library/Application Support/HotSpot/StreamDock/plugins/` and `~/Library/Application Support/HotSpot/StreamDock/Plugins/`. It recognizes `com.orumad.streamdock.macshortcuts.sdPlugin` and versioned names such as `MacShortcuts-v1.0.0.sdPlugin`. It preserves the installed folder name, including in the backup. If multiple installations exist, it asks you to specify the target.
+
+For a custom location, pass the existing `.sdPlugin` folder as the installer’s first argument. From the extracted source folder, this command targets the versioned installation:
+
+```bash
+bash ./Install-Repair.command "$HOME/Library/Application Support/HotSpot/StreamDock/plugins/MacShortcuts-v1.0.0.sdPlugin"
+```
+
+To revert, quit Stream Dock and restore the original plugin folder from the backup to its original location.
 
 The ZIP is a repair overlay for the installed 1.0.0 plugin, not a standalone fresh installation. `repository.patch` applies the complete source change to the fork’s original commit with `git apply repository.patch`.
 
