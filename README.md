@@ -1,5 +1,49 @@
 # Mac Shortcuts Plugin for Mirabox StreamDock
 
+## Loading repair (1.0.1)
+
+This fork repairs startup and the folder/shortcut picker in Orumad's 1.0.0 release.
+
+- Uses macOS's built-in JavaScript for Automation to prepare launch arguments. Python is no longer required.
+- Reads MiraBox settings events, restores the saved shortcut, and requests the live catalog.
+- Re-sends unchanged settings once when the legacy backend misses the inspector-open event.
+- Replaces indefinite Loading with a timeout message and a Retry / Refresh button.
+- Refreshes renamed folders even when their count is unchanged.
+- Keeps browsing folders separate from assigning a shortcut, preserving the saved action.
+- Preserves Unicode names and reports empty libraries without inventing a default shortcut.
+
+### Install the repair
+
+1. Download and extract the latest source ZIP from this PR’s branch on your Mac. Older repair ZIPs do not include the expanded folder detection.
+2. Quit Stream Dock completely.
+3. Run `Install-Repair.command`. It locates the existing plugin, stages the repair, and saves the complete original in `~/Library/Application Support/MiraBox-Shortcuts-Backups/`.
+4. Reopen Stream Dock and select the shortcut button. Use **Retry / Refresh** if needed.
+
+If Finder cannot run the command file, open Terminal, type `bash ` (with a trailing space), drag `Install-Repair.command` onto the Terminal window, and press Return.
+
+The installer replaces only `StreamDock-Wrapper`, `normalize-info.js`, `manifest.json`, `pi/main_pi.html`, and `pi/main_pi.js`. It preserves the existing native executable, icons, CSS, translations, settings, and Stream Dock profiles. It also restores executable permissions on the launcher and native helper.
+
+The installer checks both `~/Library/Application Support/HotSpot/StreamDock/plugins/` and `~/Library/Application Support/HotSpot/StreamDock/Plugins/`. It recognizes `com.orumad.streamdock.macshortcuts.sdPlugin` and versioned names such as `MacShortcuts-v1.0.0.sdPlugin`. It preserves the installed folder name, including in the backup. If multiple installations exist, it asks you to specify the target.
+
+For a custom location, pass the existing `.sdPlugin` folder as the installer’s first argument. From the extracted source folder, this command targets the versioned installation:
+
+```bash
+bash ./Install-Repair.command "$HOME/Library/Application Support/HotSpot/StreamDock/plugins/MacShortcuts-v1.0.0.sdPlugin"
+```
+
+To revert, quit Stream Dock and restore the original plugin folder from the backup to its original location.
+
+The ZIP is a repair overlay for the installed 1.0.0 plugin, not a standalone fresh installation. `repository.patch` applies the complete source change to the fork’s original commit with `git apply repository.patch`.
+
+### Validation and limits
+
+`npm test` runs ten focused regression checks against the actual settings-panel JavaScript with simulated DOM and Stream Dock events. These are protocol and state tests, not a full Mac hardware test. The native executable is byte-for-byte unchanged from the uploaded 1.0.0 release.
+
+The local validation environment is Linux. macOS's `osascript`, the native helper, real shortcut enumeration, and the physical StreamDock still need a Mac check. If the helper cannot start, the repair shows an actionable timeout instead of claiming the list loaded. Launcher diagnostics are in `~/Library/Logs/MiraBox-Shortcuts/launcher.log` and do not contain shortcut names.
+
+---
+
+
 ![Plugin Interface](plugin-image.jpg)
 
 A plugin for Mirabox StreamDock that allows you to execute Mac Shortcuts directly from your StreamDock buttons.

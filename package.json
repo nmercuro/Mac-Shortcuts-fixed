@@ -1,0 +1,5 @@
+{
+  "name": "mirabox-mac-shortcuts-repair",
+  "private": true,
+  "scripts": { "test": "node --test tests/*.test.cjs" }
+}

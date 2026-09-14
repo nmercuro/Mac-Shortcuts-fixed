@@ -1,327 +1,265 @@
-// Stream Dock Plugin - Mac Shortcuts
-// Based on Stream Dock SDK template
-
+// MiraBox Mac Shortcuts property inspector. No remote scripts are required.
 let websocket = null;
 let uuid = null;
 let actionInfo = null;
 let settings = {};
-
-// Data from backend
-let listOfCuts = ['Loading...'];
-let shortcutsFolder = ['All'];
 let mappedDataFromBackend = {};
-let listOfVoices = ['Alex']; // Kept for compatibility
-let isSayvoice = false; // Accessibility OFF by default
+let shortcutsFolder = ['All'];
+let listOfCuts = [];
+let usersSelectedShortcut = '';
+let selectedFolder = 'All';
 let isForcedTitle = false;
-let globalSayVoice = "Alex"; // Default value
-let usersSelectedShortcut = "";
-
-// Store translations globally for dynamic updates
 let globalTranslations = {};
+let catalogReady = false;
+let awaitingCatalog = false;
+let loadingTimer = null;
+let refreshTimer = null;
+let hasHostSettings = false;
+let connectionArgs = null;
 
-// Removed debug function
-
-// Stream Dock WebSocket connection function
-async function connectElgatoStreamDeckSocket(inPort, inPluginUUID, inRegisterEvent, inInfo, inActionInfo) {
-    uuid = inPluginUUID;
-    actionInfo = JSON.parse(inActionInfo);
-
-    // Create WebSocket connection
-    websocket = new WebSocket('ws://127.0.0.1:' + inPort);
-
-    websocket.onopen = function() {
-        // Register Property Inspector
-        const json = {
-            event: inRegisterEvent,
-            uuid: inPluginUUID
-        };
-
-        websocket.send(JSON.stringify(json));
-
-        // Request settings from backend
-        requestSettings();
-
-        // Show the main wrapper
-        const mainWrapper = document.getElementById('mainWrapper');
-        if (mainWrapper) {
-            mainWrapper.classList.remove('hidden');
-        }
-    };
-
-    websocket.onmessage = function(evt) {
-        const jsonObj = JSON.parse(evt.data);
-
-        if (jsonObj.event === 'sendToPropertyInspector') {
-            handleBackendResponse(jsonObj.payload);
-        }
-    };
-
-    websocket.onerror = function(evt) {
-        console.error('WebSocket error:', evt);
-    };
-
-    websocket.onclose = function(evt) {
-        console.warn('WebSocket closed:', evt.code);
-    };
-
-    // Auto translate page
-    try {
-        const appInfo = JSON.parse(inInfo);
-        const language = appInfo.application.language || 'en';
-        
-        // Load translations
-        const translations = await new Promise(resolve => {
-            const req = new XMLHttpRequest();
-            req.open('GET', `../${language}.json`);
-            req.send();
-            req.onreadystatechange = () => {
-                if (req.readyState === 4) {
-                    if (req.status === 200) {
-                        resolve(JSON.parse(req.responseText).Localization);
-                    } else {
-                        // Fallback to English if language file not found
-                        const fallbackReq = new XMLHttpRequest();
-                        fallbackReq.open('GET', '../en.json');
-                        fallbackReq.send();
-                        fallbackReq.onreadystatechange = () => {
-                            if (fallbackReq.readyState === 4 && fallbackReq.status === 200) {
-                                resolve(JSON.parse(fallbackReq.responseText).Localization);
-                            } else {
-                                resolve({});
-                            }
-                        };
-                    }
-                }
-            };
-        });
-
-        // Store translations globally and apply them
-        if (translations) {
-            globalTranslations = translations;
-            
-            // Traverse text nodes and translate all text nodes
-            const mainWrapper = document.getElementById('mainWrapper');
-            if (mainWrapper) {
-                const walker = document.createTreeWalker(mainWrapper, NodeFilter.SHOW_TEXT, (node) => {
-                    return node.data.trim() && NodeFilter.FILTER_ACCEPT;
-                });
-                
-                while (walker.nextNode()) {
-                    const originalText = walker.currentNode.data.trim();
-                    if (translations[originalText]) {
-                        walker.currentNode.data = translations[originalText];
-                    }
-                }
-
-                // Special handling for placeholder attributes
-                const translatePlaceholders = item => {
-                    if (item.placeholder?.trim() && translations[item.placeholder.trim()]) {
-                        item.placeholder = translations[item.placeholder.trim()];
-                    }
-                };
-                
-                mainWrapper.querySelectorAll('input').forEach(translatePlaceholders);
-                mainWrapper.querySelectorAll('textarea').forEach(translatePlaceholders);
-            }
-        }
-    } catch (error) {
-        console.warn('Translation failed:', error);
-    }
+function parseJSONSafely(value, fallback) {
+    if (typeof value !== 'string') return value === undefined ? fallback : value;
+    try { return JSON.parse(value); } catch (_) { return fallback; }
 }
 
-// Send message to plugin
-function sendToPlugin(payload) {
-    if (websocket) {
-        const json = {
-            action: actionInfo.action,
-            event: 'sendToPlugin',
-            context: uuid,
-            payload: payload
-        };
-        websocket.send(JSON.stringify(json));
-    }
+function isRecord(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-// Request settings from backend
+function showStatus(message, error) {
+    const status = document.getElementById('load_status');
+    status.textContent = message;
+    status.style.color = error ? '#ffb4ab' : '#b8b8b8';
+    status.hidden = !message;
+}
+
+function setPlaceholder(id, text) {
+    const select = document.getElementById(id);
+    select.replaceChildren(new Option(text, ''));
+    select.disabled = true;
+}
+
+function stopTimers() {
+    clearTimeout(loadingTimer);
+    clearTimeout(refreshTimer);
+}
+
+function showFailure(message) {
+    stopTimers();
+    awaitingCatalog = false;
+    if (!catalogReady) {
+        setPlaceholder('shortcuts_folder_list', 'Unavailable');
+        setPlaceholder('shortcut_list', 'Unavailable');
+    }
+    showStatus(message, true);
+    document.getElementById('retry_load').disabled = false;
+}
+
+function sendEvent(event, payload) {
+    if (!websocket || websocket.readyState !== WebSocket.OPEN) return false;
+    const message = { event, context: uuid };
+    if (payload !== undefined) message.payload = payload;
+    if (event === 'sendToPlugin') message.action = actionInfo.action;
+    websocket.send(JSON.stringify(message));
+    return true;
+}
+
+function sendToPlugin(payload) { return sendEvent('sendToPlugin', payload); }
+
 function requestSettings() {
-    sendToPlugin({
-        type: "requestSettings"
-    });
+    stopTimers();
+    awaitingCatalog = true;
+    document.getElementById('retry_load').disabled = true;
+    showStatus('Loading your shortcuts…', false);
+    if (!catalogReady) {
+        setPlaceholder('shortcuts_folder_list', 'Loading…');
+        setPlaceholder('shortcut_list', 'Loading…');
+    }
+    sendEvent('getSettings');
+    sendToPlugin({ type: 'requestSettings' });
+    // The old executable can miss propertyInspectorDidAppear on reopening.
+    // Republish the unchanged host settings once to trigger its
+    // didReceiveSettings handler, which fetches and returns the catalog.
+    refreshTimer = setTimeout(function () {
+        if (awaitingCatalog && hasHostSettings) sendEvent('setSettings', settings);
+    }, 1500);
+    loadingTimer = setTimeout(function () {
+        showFailure('The Shortcuts helper did not respond. Open Apple Shortcuts, then click Retry. If this continues, quit and reopen Stream Dock.');
+    }, 20000);
 }
 
-// Handle response from backend
+function retryLoad() {
+    if (websocket && websocket.readyState === WebSocket.OPEN) requestSettings();
+    else if (connectionArgs) connectElgatoStreamDeckSocket.apply(null, connectionArgs);
+}
+
+function readSavedSettings(saved) {
+    if (!isRecord(saved)) return;
+    settings = { ...saved };
+    hasHostSettings = true;
+    if (typeof saved.shortcutName === 'string') usersSelectedShortcut = saved.shortcutName;
+    if (typeof saved.shortcutFolder === 'string') selectedFolder = saved.shortcutFolder;
+    if (saved.isForcedTitle !== undefined) isForcedTitle = parseJSONSafely(saved.isForcedTitle, false) === true;
+    setForcedTitleState();
+}
+
 function handleBackendResponse(payload) {
-    try {
-        if (payload.error) {
-            console.error('Backend error:', payload.error);
-            return;
-        }
-
-        // Parse data from backend
-        usersSelectedShortcut = payload.shortcutName || "";
-        globalSayVoice = payload.sayvoice || "Alex";
-        isSayvoice = parseJSONSafely(payload.isSayvoice) || false;
-        isForcedTitle = parseJSONSafely(payload.isForcedTitle) || false;
-
-        // Parse shortcuts data
-        shortcutsFolder = parseJSONSafely(payload.shortcutsFolder);
-        if (!Array.isArray(shortcutsFolder)) {
-            shortcutsFolder = ['All'];
-        }
-
-        mappedDataFromBackend = parseJSONSafely(payload.mappedDataFromBackend);
-        if (!mappedDataFromBackend || typeof mappedDataFromBackend !== 'object') {
-            mappedDataFromBackend = { 'Default Shortcut': 'All' };
-        }
-
-        listOfVoices = parseJSONSafely(payload.voices);
-        if (!Array.isArray(listOfVoices)) {
-            listOfVoices = ['Alex', 'Samantha'];
-        }
-
-        // Update UI
-        filterMapped('All');
-        refreshListOfShortcutsFolders();
-        refreshListOfShortcuts();
-        setForcedTitleState();
-
-        // Show the main interface
-        const PI_Shortcuts = document.getElementById('PI_Shortcuts');
-        if (PI_Shortcuts) {
-            PI_Shortcuts.style.display = "block";
-        }
-
-    } catch (error) {
-        console.error('Error processing response:', error.message);
-    }
+    payload = parseJSONSafely(payload, null);
+    if (!isRecord(payload)) { showFailure('The Shortcuts helper returned an invalid response. Click Retry.'); return; }
+    if (payload.error) { showFailure(String(payload.error)); return; }
+    const mapping = parseJSONSafely(payload.mappedDataFromBackend, null);
+    // Settings-only replies are valid but are not a loaded shortcut library.
+    if (!isRecord(mapping) || Object.values(mapping).some(folder => typeof folder !== 'string')) return;
+    mappedDataFromBackend = mapping;
+    const folders = parseJSONSafely(payload.shortcutsFolder, []);
+    shortcutsFolder = [...new Set(['All', ...(Array.isArray(folders) ? folders.filter(f => typeof f === 'string') : []), ...Object.values(mapping)])];
+    if (typeof payload.shortcutName === 'string') usersSelectedShortcut = payload.shortcutName;
+    if (payload.isForcedTitle !== undefined) isForcedTitle = parseJSONSafely(payload.isForcedTitle, false) === true;
+    if (!shortcutsFolder.includes(selectedFolder)) selectedFolder = 'All';
+    catalogReady = true;
+    awaitingCatalog = false;
+    stopTimers();
+    refreshListOfShortcutsFolders();
+    filterMapped(selectedFolder);
+    setForcedTitleState();
+    document.getElementById('retry_load').disabled = false;
+    if (!Object.keys(mapping).length) showStatus('No shortcuts found. Create one in Apple Shortcuts, then click Retry.', false);
+    else if (usersSelectedShortcut && !Object.prototype.hasOwnProperty.call(mapping, usersSelectedShortcut)) showStatus('The saved shortcut is no longer available. Choose a shortcut to update this button.', true);
+    else showStatus('', false);
 }
 
-// Update settings
-function updateSettings() {
-    if (!uuid) return;
-
-    let payload = {
-        type: "updateSettings"
+async function connectElgatoStreamDeckSocket(inPort, inPluginUUID, inRegisterEvent, inInfo, inActionInfo) {
+    connectionArgs = [inPort, inPluginUUID, inRegisterEvent, inInfo, inActionInfo];
+    stopTimers();
+    if (websocket) { websocket.onclose = null; websocket.close(); }
+    document.getElementById('mainWrapper').classList.remove('hidden');
+    uuid = inPluginUUID;
+    actionInfo = parseJSONSafely(inActionInfo, null);
+    if (!isRecord(actionInfo) || typeof actionInfo.action !== 'string') {
+        showFailure('Stream Dock supplied invalid button information. Remove and add this action again.');
+        return;
+    }
+    readSavedSettings(actionInfo.payload && actionInfo.payload.settings);
+    const socket = new WebSocket('ws://127.0.0.1:' + inPort);
+    websocket = socket;
+    loadingTimer = setTimeout(() => showFailure('Could not connect to Stream Dock. Click Retry or restart Stream Dock.'), 10000);
+    socket.onopen = function () {
+        if (socket !== websocket) return;
+        socket.send(JSON.stringify({ event: inRegisterEvent, uuid: inPluginUUID }));
+        requestSettings();
     };
-
-    const shortcutName = document.getElementById('shortcut_list');
-    if (shortcutName) {
-        payload.shortcutName = shortcutName.value;
-    }
-
-    payload.isForcedTitle = isForcedTitle.toString();
-
-    // Fixed accessibility values (OFF)
-    payload.sayvoice = "Alex";
-    payload.isSayvoice = "false";
-    payload.sayHoldTime = "0";
-
-    sendToPlugin(payload);
-}
-
-// Helper function to parse JSON safely
-function parseJSONSafely(str) {
-    try {
-        if (typeof str === 'string') {
-            return JSON.parse(str);
+    socket.onmessage = function (evt) {
+        if (socket !== websocket) return;
+        let message;
+        try { message = JSON.parse(evt.data); } catch (_) { showFailure('Stream Dock returned an unreadable response. Click Retry.'); return; }
+        if (message.event === 'sendToPropertyInspector') handleBackendResponse(message.payload);
+        else if (message.event === 'didReceiveSettings') {
+            const saved = message.payload && message.payload.settings;
+            readSavedSettings(saved);
+            // Some MiraBox versions return the plugin's catalog in settings.
+            if (isRecord(saved) && saved.mappedDataFromBackend !== undefined) handleBackendResponse(saved);
+            else if (catalogReady) { refreshListOfShortcutsFolders(); filterMapped(selectedFolder); }
         }
-        return str;
-    } catch (error) {
-        console.error('JSON parse error:', error.message);
-        return {};
-    }
-}
-
-// All the existing UI functions (keeping the same logic)
-function filterMapped(filteredByFolder) {
-    listOfCuts.length = 0;
-
-    if (filteredByFolder == 'All') {
-        for (var key in mappedDataFromBackend) {
-            listOfCuts.push(key);
-        }
-    } else {
-        for (var key in mappedDataFromBackend) {
-            if (filteredByFolder == mappedDataFromBackend[key]) {
-                listOfCuts.push(key);
-            }
-        }
-    }
-
-    const select = document.getElementById("shortcuts_folder_list");
-    if (select) select.value = filteredByFolder;
-
-    listOfCuts.sort();
-    refreshListOfShortcuts();
+    };
+    socket.onerror = function () { if (socket === websocket) showFailure('Could not connect to Stream Dock. Click Retry.'); };
+    socket.onclose = function () { if (socket === websocket) showFailure('Stream Dock disconnected. Click Retry to reconnect.'); };
+    const app = parseJSONSafely(inInfo, {});
+    const language = app.application && app.application.language || 'en';
+    loadTranslations(language);
 }
 
 function refreshListOfShortcutsFolders() {
-    const select = document.getElementById("shortcuts_folder_list");
-    if (!select) return;
+    if (!catalogReady) return;
+    const select = document.getElementById('shortcuts_folder_list');
+    // Always rebuild: renamed folders can have the same count as before.
+    select.replaceChildren(...shortcutsFolder.map(folder => new Option(folder, folder)));
+    select.value = selectedFolder;
+    select.disabled = false;
+}
 
-    if (shortcutsFolder.length <= 1) {
-        const folderID = document.getElementById("isFolder");
-        if (folderID) folderID.style.display = "none";
-    }
-
-    if (select.length != shortcutsFolder.length) {
-        select.length = 0;
-        for (var val of shortcutsFolder) {
-            const option = document.createElement("option");
-            option.value = val;
-            option.text = val;
-            select.appendChild(option);
-        }
-    }
+function filterMapped(folder) {
+    if (!catalogReady) return;
+    selectedFolder = shortcutsFolder.includes(folder) ? folder : 'All';
+    listOfCuts = Object.keys(mappedDataFromBackend)
+        .filter(name => selectedFolder === 'All' || mappedDataFromBackend[name] === selectedFolder)
+        .sort((a, b) => a.localeCompare(b));
+    document.getElementById('shortcuts_folder_list').value = selectedFolder;
+    refreshListOfShortcuts();
 }
 
 function refreshListOfShortcuts() {
-    const listOfShortcuts = document.getElementById("shortcut_list");
-    if (!listOfShortcuts) return;
+    if (!catalogReady) return;
+    const select = document.getElementById('shortcut_list');
+    select.replaceChildren(new Option(listOfCuts.length ? 'Choose a shortcut…' : 'No shortcuts in this folder', ''), ...listOfCuts.map(name => new Option(name, name)));
+    select.value = listOfCuts.includes(usersSelectedShortcut) ? usersSelectedShortcut : '';
+    select.disabled = !listOfCuts.length;
+}
 
-    listOfShortcuts.length = 0;
+function updateSettings() {
+    if (!uuid || !catalogReady) return;
+    const payload = {
+        ...settings,
+        type: 'updateSettings',
+        shortcutName: usersSelectedShortcut,
+        shortcutFolder: selectedFolder,
+        isForcedTitle: String(isForcedTitle),
+        sayvoice: 'Alex', isSayvoice: 'false', sayHoldTime: '0'
+    };
+    // Catalog data is a reply, not configuration. Do not store a stale copy.
+    for (const key of ['mappedDataFromBackend', 'shortcuts', 'shortcutsFolder', 'voices']) delete payload[key];
+    settings = payload;
+    sendEvent('setSettings', payload);
+    sendToPlugin(payload);
+}
 
-    for (var val of listOfCuts) {
-        const option = document.createElement("option");
-        option.value = val;
-        
-        // Translate "Loading..." if it's the placeholder
-        if (val === 'Loading...' && globalTranslations['Loading...']) {
-            option.text = globalTranslations['Loading...'];
-        } else {
-            option.text = val.charAt(0).toUpperCase() + val.slice(1);
-        }
-        
-        listOfShortcuts.appendChild(option);
+function selectedNewIndex(_index, type) {
+    if (!catalogReady) return;
+    if (type === 'shortcutFolder') {
+        filterMapped(document.getElementById('shortcuts_folder_list').value);
+        // Browsing folders must never silently assign the first shortcut.
+        return;
     }
-
-    if (listOfCuts.includes(usersSelectedShortcut)) {
-        listOfShortcuts.value = usersSelectedShortcut;
-    }
+    const selection = document.getElementById('shortcut_list').value;
+    if (!selection || !Object.prototype.hasOwnProperty.call(mappedDataFromBackend, selection)) return;
+    usersSelectedShortcut = selection;
+    showStatus('', false);
+    updateSettings();
 }
 
 function setForcedTitleState() {
-    const button = document.getElementById("forced_title_checkbox");
-    if (!button) return;
-
-    // Use translations if available, fallback to English
-    const onText = globalTranslations['ON'] || 'ON';
-    const offText = globalTranslations['OFF'] || 'OFF';
-    
-    button.textContent = isForcedTitle ? onText : offText;
-}
-
-function selectedNewIndex(selected_id, selected_type) {
-    if (selected_type == "shortcutFolder") {
-        filterMapped(shortcutsFolder[selected_id]);
-    } else if (selected_type == "shortcut") {
-        // Shortcut selected
-    }
-    updateSettings();
+    document.getElementById('forced_title_checkbox').textContent = isForcedTitle ? (globalTranslations.ON || 'ON') : (globalTranslations.OFF || 'OFF');
 }
 
 function changeForcedTitle() {
+    // The legacy backend cannot safely save an action without a shortcut.
+    if (!catalogReady || !usersSelectedShortcut || !Object.prototype.hasOwnProperty.call(mappedDataFromBackend, usersSelectedShortcut)) return;
     isForcedTitle = !isForcedTitle;
     setForcedTitleState();
     updateSettings();
+}
+
+function readTranslations(language) {
+    return new Promise(resolve => {
+        const request = new XMLHttpRequest();
+        request.open('GET', '../' + language + '.json');
+        request.timeout = 2000;
+        request.onload = function () {
+            const parsed = parseJSONSafely(request.responseText, null);
+            resolve((request.status === 200 || request.status === 0) && parsed && isRecord(parsed.Localization) ? parsed.Localization : null);
+        };
+        request.onerror = request.ontimeout = function () { resolve(null); };
+        request.send();
+    });
+}
+
+async function loadTranslations(language) {
+    try {
+        language = /^[a-z]{2}(?:[_-][A-Za-z]{2})?$/.test(language) ? language : 'en';
+        globalTranslations = await readTranslations(language) || await readTranslations('en') || {};
+        document.querySelectorAll('[data-i18n]').forEach(element => {
+            const translated = globalTranslations[element.dataset.i18n];
+            if (translated) element.textContent = translated;
+        });
+        setForcedTitleState();
+    } catch (_) { /* Translation failures do not stop the shortcut picker. */ }
 }
